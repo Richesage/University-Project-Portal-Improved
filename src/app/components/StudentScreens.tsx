@@ -80,12 +80,41 @@ export function StudentDashboard({ onNavigate }: ScreenProps) {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [submissionCount, setSubmissionCount] = useState<number | null>(null);
-  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState<number | null>(null);
+  const [requests, setRequests] = useState<SupervisionRequest[]>([]);
 
   useEffect(() => {
     projectApi.current().then(setProject).finally(() => setLoading(false));
     submissionsApi.list().then(list => setSubmissionCount(list.length)).catch(() => {});
+    supervisorRequestsApi.listForStudent().then(setRequests).catch(() => {});
+    messagesApi.conversations('student')
+      .then(convs => setUnreadMessages(convs.reduce((n, c) => n + (c.unreadCount ?? 0), 0)))
+      .catch(() => setUnreadMessages(0));
   }, []);
+
+  const approvalStatusConfig: Record<string, { label: string; cls: string }> = {
+    approved:        { label: 'Supervisor Approved',   cls: 'text-emerald-700 bg-emerald-50' },
+    pending:         { label: 'Awaiting Approval',     cls: 'text-amber-700 bg-amber-50' },
+    pending_review:  { label: 'Under Review',          cls: 'text-amber-700 bg-amber-50' },
+    rejected:        { label: 'Revision Requested',    cls: 'text-red-700 bg-red-50' },
+  };
+
+  const latestRequest = requests.find(r => r.status === 'accepted') ?? requests[0];
+
+  const cards = [
+    {
+      label: 'Overall Progress', value: loading ? '—' : `${project?.overallProgress ?? 0}%`,
+      icon: BarChart2, color: 'text-[#312DC4]', bg: 'bg-[#EEEDFB]', screen: 'progress',
+    },
+    {
+      label: 'Submissions', value: submissionCount === null ? '—' : String(submissionCount),
+      icon: FileText, color: 'text-emerald-600', bg: 'bg-emerald-50', screen: 'submission',
+    },
+    {
+      label: 'Messages', value: unreadMessages === null ? '—' : String(unreadMessages),
+      icon: MessageSquare, color: 'text-amber-600', bg: 'bg-amber-50', screen: 'messages',
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -94,13 +123,14 @@ export function StudentDashboard({ onNavigate }: ScreenProps) {
         <p className="text-sm text-gray-500 mt-0.5">Here is an overview of your project progress.</p>
       </div>
 
+      {/* ── Stat Cards ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {[
-          { label: 'Overall Progress', value: loading ? '—' : `${project?.overallProgress ?? 0}%`, icon: BarChart2,     color: 'text-[#312DC4]',   bg: 'bg-[#EEEDFB]' },
-          { label: 'Submissions',      value: submissionCount === null ? '—' : String(submissionCount), icon: FileText, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Messages',         value: '—',                                                   icon: MessageSquare, color: 'text-amber-600',  bg: 'bg-amber-50' },
-        ].map((card) => (
-          <div key={card.label} className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-4">
+        {cards.map((card) => (
+          <button
+            key={card.label}
+            onClick={() => onNavigate(card.screen)}
+            className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-4 hover:border-[#C5C3EC] hover:shadow-sm transition-all text-left"
+          >
             <div className={`w-11 h-11 ${card.bg} rounded-lg flex items-center justify-center shrink-0`}>
               <card.icon className={`w-5 h-5 ${card.color}`} />
             </div>
@@ -108,77 +138,130 @@ export function StudentDashboard({ onNavigate }: ScreenProps) {
               <p className="text-2xl font-bold text-gray-800">{card.value}</p>
               <p className="text-xs text-gray-500">{card.label}</p>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="font-semibold text-gray-700 mb-4">Current Project</h3>
-        {loading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-5 w-3/4" />
-            <Skeleton className="h-4 w-1/2" />
-            <Skeleton className="h-2 w-full" />
-          </div>
-        ) : project ? (
-          <div className="space-y-3">
-            <div>
-              <p className="font-medium text-gray-800">{project.topicTitle}</p>
-              <p className="text-sm text-gray-500">Supervisor: {project.supervisorName}</p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ── Current Project ── */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-700 mb-4 text-sm">Current Project</h3>
+          {loading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-5 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-2 w-full" />
             </div>
-            <div>
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-500">Progress</span>
-                <span className="font-medium text-[#312DC4]">{project.overallProgress}%</span>
+          ) : project ? (
+            <div className="space-y-4">
+              <div>
+                <p className="font-medium text-gray-800">{project.topicTitle || 'Topic not yet assigned'}</p>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Supervisor: <span className="font-medium text-gray-700">{project.supervisorName || 'Not assigned'}</span>
+                </p>
               </div>
-              <div className="w-full bg-gray-100 rounded-full h-2">
-                <div className="bg-[#312DC4] h-2 rounded-full transition-all duration-500" style={{ width: `${project.overallProgress}%` }} />
+              <div>
+                <div className="flex justify-between text-sm mb-1.5">
+                  <span className="text-gray-500">Progress</span>
+                  <span className="font-semibold text-[#312DC4]">{project.overallProgress}%</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div className="bg-[#312DC4] h-2 rounded-full transition-all duration-500" style={{ width: `${project.overallProgress}%` }} />
+                </div>
               </div>
+              {project.supervisorApprovalStatus && (() => {
+                const cfg = approvalStatusConfig[project.supervisorApprovalStatus] ?? { label: project.supervisorApprovalStatus, cls: 'text-gray-600 bg-gray-50' };
+                return (
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${cfg.cls}`}>
+                    <CheckCircle className="w-3 h-3" /> {cfg.label}
+                  </span>
+                );
+              })()}
+              <button onClick={() => onNavigate('progress')} className="text-xs text-[#312DC4] hover:underline font-medium">
+                View full progress →
+              </button>
             </div>
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-              <CheckCircle className="w-3 h-3" /> {project.supervisorApprovalStatus}
-            </span>
+          ) : (
+            <div className="text-center py-6">
+              <BarChart2 className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No active project yet.</p>
+              <button onClick={() => onNavigate('find-supervisor')} className="mt-3 text-sm font-medium text-[#312DC4] hover:underline">
+                Find a supervisor to get started →
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ── Supervision Status ── */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-700 text-sm">Supervision Status</h3>
+            <button onClick={() => onNavigate('my-requests')} className="text-xs text-[#312DC4] hover:underline font-medium">View all</button>
           </div>
-        ) : (
-          <div className="text-center py-6">
-            <p className="text-gray-500 text-sm">No active project yet.</p>
-            <button onClick={() => onNavigate('find-supervisor')} className="mt-3 text-sm text-[#312DC4] hover:underline">
-              Find a supervisor to get started
-            </button>
-          </div>
-        )}
+          {loading ? (
+            <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : latestRequest ? (
+            <div className="space-y-3">
+              <div className={`rounded-lg border p-4 ${
+                latestRequest.status === 'accepted' ? 'border-emerald-200 bg-emerald-50' :
+                latestRequest.status === 'rejected' ? 'border-red-200 bg-red-50' :
+                'border-amber-200 bg-amber-50'
+              }`}>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-sm font-semibold text-gray-800">{latestRequest.lecturerName}</p>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                    latestRequest.status === 'accepted' ? 'bg-emerald-100 text-emerald-700' :
+                    latestRequest.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                    'bg-amber-100 text-amber-700'
+                  }`}>
+                    {latestRequest.status === 'accepted' ? 'Admitted' :
+                     latestRequest.status === 'rejected' ? 'Declined' : 'Pending'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-600 truncate">{latestRequest.topicInterest}</p>
+                {latestRequest.status === 'rejected' && latestRequest.denyReason && (
+                  <p className="text-xs text-red-600 mt-1.5 line-clamp-2">Reason: {latestRequest.denyReason}</p>
+                )}
+              </div>
+              {requests.length > 1 && (
+                <p className="text-xs text-gray-400">{requests.length - 1} other request{requests.length > 2 ? 's' : ''} — <button onClick={() => onNavigate('my-requests')} className="text-[#312DC4] hover:underline">see all</button></p>
+              )}
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <UserCheck className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">No supervision requests yet.</p>
+              <button onClick={() => onNavigate('find-supervisor')} className="mt-3 text-xs font-medium text-[#312DC4] hover:underline">
+                Find a supervisor →
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200">
-        <button
-          onClick={() => setQuickActionsOpen(v => !v)}
-          className="w-full flex items-center justify-between p-5 text-left"
-        >
-          <h3 className="font-semibold text-gray-700">Quick Actions</h3>
-          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${quickActionsOpen ? 'rotate-180' : ''}`} />
-        </button>
-        {quickActionsOpen && (
-          <div className="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {[
-              { label: 'Find a Supervisor',       screen: 'find-supervisor',  icon: Search },
-              { label: 'My Supervision Requests', screen: 'my-requests',      icon: UserCheck },
-              { label: 'Browse Topics',           screen: 'topic-selection',  icon: Star },
-              { label: 'Submit Chapter',          screen: 'submission',       icon: Upload },
-              { label: 'View Progress',           screen: 'progress',         icon: BarChart2 },
-              { label: 'Messages',                screen: 'messages',         icon: MessageSquare },
-            ].map((a) => (
-              <button
-                key={a.screen}
-                onClick={() => onNavigate(a.screen)}
-                className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-[#C5C3EC] hover:bg-[#EEEDFB] transition-colors text-left"
-              >
-                <a.icon className="w-4 h-4 text-[#312DC4] shrink-0" />
-                <span className="text-sm font-medium text-gray-700">{a.label}</span>
-                <ChevronRight className="w-4 h-4 text-gray-400 ml-auto shrink-0" />
-              </button>
-            ))}
-          </div>
-        )}
+      {/* ── Quick Actions ── */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="font-semibold text-gray-700 text-sm mb-4">Quick Actions</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {[
+            { label: 'Find a Supervisor',       screen: 'find-supervisor',  icon: Search },
+            { label: 'My Requests',             screen: 'my-requests',      icon: UserCheck },
+            { label: 'Browse Topics',           screen: 'topic-selection',  icon: Star },
+            { label: 'Submit Chapter',          screen: 'submission',       icon: Upload },
+            { label: 'View Progress',           screen: 'progress',         icon: BarChart2 },
+            { label: 'Messages',                screen: 'messages',         icon: MessageSquare },
+          ].map((a) => (
+            <button
+              key={a.screen}
+              onClick={() => onNavigate(a.screen)}
+              className="flex items-center gap-3 p-3.5 rounded-lg border border-gray-200 hover:border-[#C5C3EC] hover:bg-[#EEEDFB] transition-colors text-left"
+            >
+              <a.icon className="w-4 h-4 text-[#312DC4] shrink-0" />
+              <span className="text-sm font-medium text-gray-700">{a.label}</span>
+              <ChevronRight className="w-3.5 h-3.5 text-gray-400 ml-auto shrink-0" />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -622,37 +705,69 @@ export function ProjectTopicSelection({ onNavigate: _onNavigate }: ScreenProps) 
                 ? Array.from({ length: 4 }).map((_, i) => (
                   <tr key={i}><td colSpan={6} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td></tr>
                 ))
-                : topics.map((topic) => (
-                  <tr key={topic.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-800 max-w-xs">
-                      <p className="truncate">{topic.title}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{topic.department}</p>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{topic.lecturerName}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-block text-xs font-medium text-[#312DC4] bg-[#EEEDFB] border border-[#C5C3EC] rounded-full px-2 py-0.5">
-                        {topic.specialization}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{topic.enrolledStudents}/{topic.maxStudents}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                        topic.status === 'available' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                      }`}>
-                        {topic.status === 'available' ? 'Available' : 'Full'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
+                : topics.length === 0
+                ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-16 text-center">
+                      <Filter className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+                      <p className="text-sm font-medium text-gray-500">No topics match your filters</p>
                       <button
-                        disabled={topic.status !== 'available' || selecting}
-                        onClick={() => handleSelect(topic)}
-                        className="px-3 py-1.5 rounded-md text-xs font-medium text-white bg-[#312DC4] hover:bg-[#2724b0] disabled:opacity-40"
+                        onClick={() => setFilters({ search: '', department: '', researchArea: '' })}
+                        className="mt-2 text-xs text-[#312DC4] hover:underline font-medium"
                       >
-                        Select
+                        Clear all filters
                       </button>
                     </td>
                   </tr>
-                ))
+                )
+                : topics.map((topic) => {
+                  const statusConfig: Record<string, { label: string; cls: string }> = {
+                    available:        { label: 'Available',        cls: 'bg-emerald-50 text-emerald-700' },
+                    full:             { label: 'Full',             cls: 'bg-red-50 text-red-700' },
+                    pending_approval: { label: 'Pending Approval', cls: 'bg-amber-50 text-amber-700' },
+                    approved:         { label: 'Approved',         cls: 'bg-blue-50 text-blue-700' },
+                    rejected:         { label: 'Rejected',         cls: 'bg-red-50 text-red-700' },
+                  };
+                  const sc = statusConfig[topic.status] ?? { label: topic.status, cls: 'bg-gray-50 text-gray-600' };
+                  return (
+                    <tr key={topic.id} className={`hover:bg-gray-50 ${selectedTopic?.id === topic.id ? 'bg-emerald-50/40' : ''}`}>
+                      <td className="px-4 py-3 font-medium text-gray-800 max-w-xs">
+                        <div className="flex items-center gap-1.5">
+                          <p className="truncate">{topic.title}</p>
+                          {selectedTopic?.id === topic.id && (
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5">{topic.department}</p>
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{topic.lecturerName}</td>
+                      <td className="px-4 py-3">
+                        <span className="inline-block text-xs font-medium text-[#312DC4] bg-[#EEEDFB] border border-[#C5C3EC] rounded-full px-2 py-0.5">
+                          {topic.specialization}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{topic.enrolledStudents}/{topic.maxStudents}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sc.cls}`}>
+                          {sc.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {selectedTopic?.id === topic.id ? (
+                          <span className="text-xs text-emerald-600 font-medium">Selected</span>
+                        ) : (
+                          <button
+                            disabled={topic.status !== 'available' || selecting}
+                            onClick={() => handleSelect(topic)}
+                            className="px-3 py-1.5 rounded-md text-xs font-medium text-white bg-[#312DC4] hover:bg-[#2724b0] disabled:opacity-40"
+                          >
+                            Select
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               }
             </tbody>
           </table>
@@ -1417,6 +1532,9 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
   const [form, setForm] = useState({
     name: user?.name ?? '',
     department: user?.department ?? '',
+    phone: '',
+    level: '',
+    bio: '',
   });
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1436,10 +1554,15 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
     } finally { setAvatarUploading(false); }
   };
 
+  const handleEdit = () => {
+    setForm({ name: user?.name ?? '', department: user?.department ?? '', phone: '', level: '', bio: '' });
+    setEditing(true);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      await profileApi.updateProfile({ name: form.name, department: form.department });
+      await profileApi.updateProfile({ name: form.name, department: form.department, bio: form.bio });
       updateUser({ name: form.name, department: form.department });
       setEditing(false);
       setSaved(true);
@@ -1449,6 +1572,23 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
   };
 
   const initials = (user?.name ?? 'S').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  const field = (label: string, value: React.ReactNode, editNode: React.ReactNode, span?: boolean) => (
+    <div className={span ? 'sm:col-span-2' : ''}>
+      <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">{label}</label>
+      {editing ? editNode : <p className="text-sm text-gray-800">{value || '—'}</p>}
+    </div>
+  );
+
+  const inp = (key: keyof typeof form, placeholder?: string, type = 'text') => (
+    <input
+      type={type}
+      value={form[key]}
+      placeholder={placeholder}
+      onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]"
+    />
+  );
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -1468,7 +1608,7 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
               </button>
             </>
           ) : (
-            <button onClick={() => setEditing(true)}
+            <button onClick={handleEdit}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium text-[#312DC4] border border-[#C5C3EC] bg-[#EEEDFB] hover:bg-[#E3E2F7]">
               <PenLine className="w-4 h-4" />Edit Profile
             </button>
@@ -1477,6 +1617,7 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-6">
+        {/* ── Avatar ── */}
         <div className="flex items-center gap-5">
           <div className="relative">
             <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
@@ -1487,8 +1628,7 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
               {avatarUploading ? (
                 <div className="w-5 h-5 border-2 border-[#312DC4] border-t-transparent rounded-full animate-spin" />
               ) : avatarUrl ? (
-                <img src={avatarUrl} alt="avatar" className="w-full h-full object-cover"
-                  onError={() => setAvatarUrl(undefined)} />
+                <img src={avatarUrl} alt="avatar" className="w-full h-full object-cover" onError={() => setAvatarUrl(undefined)} />
               ) : initials}
             </div>
             {editing && !avatarUploading && (
@@ -1507,32 +1647,52 @@ export function StudentProfile({ onNavigate: _onNavigate }: ScreenProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Full Name</label>
-            {editing ? (
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
-            ) : (
-              <p className="text-sm text-gray-800">{user?.name || '—'}</p>
-            )}
-          </div>
+        {/* ── Fields ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {field('Full Name', user?.name, inp('name', 'Your full name'))}
+
           <div>
             <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Matric Number</label>
             <p className="text-sm text-gray-800">{user?.matricNumber || '—'}</p>
+            {editing && <p className="text-xs text-gray-400 mt-0.5">Cannot be changed — contact admin</p>}
           </div>
+
+          {field('Department / Faculty', user?.department, inp('department', 'e.g. Computer Science'))}
+
+          {field('Level / Year of Study', form.level || '—', (
+            <select
+              value={form.level}
+              onChange={e => setForm(f => ({ ...f, level: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4] appearance-none"
+            >
+              <option value="">Select level</option>
+              {['100', '200', '300', '400', '500', 'Postgraduate'].map(l => (
+                <option key={l} value={l}>{l} Level</option>
+              ))}
+            </select>
+          ))}
+
           <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Department</label>
-            {editing ? (
-              <input value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
-            ) : (
-              <p className="text-sm text-gray-800">{user?.department || '—'}</p>
-            )}
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Email</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Email Address</label>
             <p className="text-sm text-gray-800">{user?.email || '—'}</p>
+            {editing && <p className="text-xs text-gray-400 mt-0.5">Contact support to change email</p>}
+          </div>
+
+          {field('Phone Number', form.phone || '—', inp('phone', 'e.g. +234 800 000 0000', 'tel'))}
+
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Bio / About</label>
+            {editing ? (
+              <textarea
+                value={form.bio}
+                onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
+                rows={3}
+                placeholder="A short introduction about yourself, your interests, and research goals…"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4] resize-none"
+              />
+            ) : (
+              <p className="text-sm text-gray-800 leading-relaxed">{form.bio || '—'}</p>
+            )}
           </div>
         </div>
       </div>

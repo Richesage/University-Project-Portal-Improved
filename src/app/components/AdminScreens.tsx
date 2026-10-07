@@ -3,15 +3,16 @@ import {
   Users, BookOpen, UserCheck, Download, Search, Upload,
   AlertTriangle, FileText, CheckCircle, Info, Bell,
   ChevronRight, BarChart2, X, Eye, ThumbsUp, ThumbsDown,
-  GitBranch, Shield, PenLine, Save, Camera,
+  GitBranch, Shield, PenLine, Save, Camera, Megaphone,
+  Trash2, Clock, Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { adminApi, profileApi, topicsApi, supervisorRequestsApi } from '../../lib/api';
+import { adminApi, profileApi, topicsApi, supervisorRequestsApi, announcementsApi } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { useAppSettings } from '../../context/AppSettingsContext';
 import type {
   AdminStats, AppNotification, StudentRecord, SupervisorRecord,
-  ReportFilters, ReportRow, Topic, SupervisionRequest,
+  ReportFilters, ReportRow, Topic, SupervisionRequest, Announcement,
 } from '../../types';
 
 interface ScreenProps { onNavigate: (screen: string) => void; }
@@ -942,6 +943,9 @@ export function AdminProfile({ onNavigate: _onNavigate }: ScreenProps) {
   const [form, setForm] = useState({
     name: user?.name ?? '',
     department: user?.department ?? '',
+    phone: '',
+    bio: '',
+    title: '',
   });
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -983,10 +987,15 @@ export function AdminProfile({ onNavigate: _onNavigate }: ScreenProps) {
     } finally { setBrandSaving(false); }
   };
 
+  const handleEdit = () => {
+    setForm({ name: user?.name ?? '', department: user?.department ?? '', phone: '', bio: '', title: '' });
+    setEditing(true);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      await profileApi.updateProfile({ name: form.name, department: form.department });
+      await profileApi.updateProfile({ name: form.name, department: form.department, bio: form.bio });
       updateUser({ name: form.name, department: form.department });
       setEditing(false);
       setSaved(true);
@@ -1015,7 +1024,7 @@ export function AdminProfile({ onNavigate: _onNavigate }: ScreenProps) {
               </button>
             </>
           ) : (
-            <button onClick={() => setEditing(true)}
+            <button onClick={handleEdit}
               className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium text-[#312DC4] border border-[#C5C3EC] bg-[#EEEDFB] hover:bg-[#E3E2F7]">
               <PenLine className="w-4 h-4" />Edit Profile
             </button>
@@ -1053,32 +1062,69 @@ export function AdminProfile({ onNavigate: _onNavigate }: ScreenProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {/* Full Name */}
           <div>
             <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Full Name</label>
             {editing ? (
               <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="Your full name"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
-            ) : (
-              <p className="text-sm text-gray-800">{user?.name || '—'}</p>
-            )}
+            ) : <p className="text-sm text-gray-800">{user?.name || '—'}</p>}
           </div>
+
+          {/* Staff ID — read-only */}
           <div>
             <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Staff ID</label>
             <p className="text-sm text-gray-800">{user?.staffId || '—'}</p>
+            {editing && <p className="text-xs text-gray-400 mt-0.5">Contact IT to update Staff ID</p>}
           </div>
+
+          {/* Department */}
           <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Department</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Department / Unit</label>
             {editing ? (
               <input value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
+                placeholder="e.g. Academic Registry"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
-            ) : (
-              <p className="text-sm text-gray-800">{user?.department || '—'}</p>
-            )}
+            ) : <p className="text-sm text-gray-800">{user?.department || '—'}</p>}
           </div>
+
+          {/* Phone */}
           <div>
-            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Email</label>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Phone Number</label>
+            {editing ? (
+              <input type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                placeholder="e.g. +234 800 000 0000"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
+            ) : <p className="text-sm text-gray-800">{form.phone || '—'}</p>}
+          </div>
+
+          {/* Email — read-only */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Email Address</label>
             <p className="text-sm text-gray-800">{user?.email || '—'}</p>
+            {editing && <p className="text-xs text-gray-400 mt-0.5">Contact support to change email</p>}
+          </div>
+
+          {/* Job Title */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Job Title / Role</label>
+            {editing ? (
+              <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                placeholder="e.g. Academic Coordinator"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
+            ) : <p className="text-sm text-gray-800">{form.title || '—'}</p>}
+          </div>
+
+          {/* Bio */}
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Bio / About</label>
+            {editing ? (
+              <textarea value={form.bio} onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
+                rows={3} placeholder="A short introduction about your role and responsibilities…"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4] resize-none" />
+            ) : <p className="text-sm text-gray-800 leading-relaxed">{form.bio || '—'}</p>}
           </div>
         </div>
       </div>
@@ -1140,6 +1186,209 @@ export function AdminProfile({ onNavigate: _onNavigate }: ScreenProps) {
           </div>
           <p className="text-xs text-gray-400 mt-1">Shown in the header and browser tab for all users.</p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AdminAnnouncements ───────────────────────────────────────────────────────
+export function AdminAnnouncements({ onNavigate: _onNavigate }: ScreenProps) {
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  // Create form
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [type, setType] = useState<Announcement['type']>('info');
+  const [expiresAt, setExpiresAt] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+
+  const load = useCallback(() => {
+    announcementsApi.list().then(setAnnouncements).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !body.trim()) return;
+    setCreating(true);
+    try {
+      await announcementsApi.create({ title: title.trim(), body: body.trim(), type, expiresAt: expiresAt || undefined });
+      toast.success('Announcement published to all users');
+      setTitle(''); setBody(''); setType('info'); setExpiresAt('');
+      setFormOpen(false);
+      load();
+    } catch (e) {
+      toast.error('Failed to publish', { description: e instanceof Error ? e.message : 'Try again.' });
+    } finally { setCreating(false); }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id);
+    try {
+      await announcementsApi.remove(id);
+      setAnnouncements(prev => prev.filter(a => a.id !== id));
+      toast.success('Announcement removed');
+    } catch {
+      toast.error('Failed to remove');
+    } finally { setDeleting(null); }
+  };
+
+  const typeConfig: Record<Announcement['type'], { label: string; cls: string; bg: string }> = {
+    info:    { label: 'Info',    cls: 'text-blue-700 bg-blue-50 border-blue-200',    bg: 'bg-blue-50' },
+    warning: { label: 'Warning', cls: 'text-amber-700 bg-amber-50 border-amber-200', bg: 'bg-amber-50' },
+    success: { label: 'Success', cls: 'text-emerald-700 bg-emerald-50 border-emerald-200', bg: 'bg-emerald-50' },
+    urgent:  { label: 'Urgent',  cls: 'text-red-700 bg-red-50 border-red-200',       bg: 'bg-red-50' },
+  };
+
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    if (diff < 60_000) return 'just now';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-800">Announcements</h2>
+          <p className="text-sm text-gray-500 mt-0.5">Broadcast messages visible to all students and lecturers.</p>
+        </div>
+        <button
+          onClick={() => setFormOpen(v => !v)}
+          className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-white bg-[#312DC4] hover:bg-[#2724b0] transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          {formOpen ? 'Cancel' : 'New Announcement'}
+        </button>
+      </div>
+
+      {/* ── Create form ── */}
+      {formOpen && (
+        <div className="bg-white rounded-lg border border-[#C5C3EC] shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-5 pb-3 border-b border-gray-100">
+            <Megaphone className="w-4 h-4 text-[#312DC4]" />
+            <h3 className="font-semibold text-gray-700 text-sm">Create Announcement</h3>
+          </div>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Title</label>
+                <input
+                  required value={title} onChange={e => setTitle(e.target.value)}
+                  placeholder="e.g. Submission Deadline Extended"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Type</label>
+                <select value={type} onChange={e => setType(e.target.value as Announcement['type'])}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4] appearance-none">
+                  <option value="info">Info</option>
+                  <option value="success">Success</option>
+                  <option value="warning">Warning</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Message Body</label>
+              <textarea
+                required value={body} onChange={e => setBody(e.target.value)}
+                rows={3} placeholder="Write the announcement content here…"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4] resize-none"
+              />
+            </div>
+
+            <div className="flex items-end gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Expires On (optional)</label>
+                <input type="date" value={expiresAt} onChange={e => setExpiresAt(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
+              </div>
+              <button type="submit" disabled={creating}
+                className="px-5 py-2 rounded-md text-sm font-medium text-white bg-[#312DC4] hover:bg-[#2724b0] disabled:opacity-60">
+                {creating ? 'Publishing…' : 'Publish Announcement'}
+              </button>
+            </div>
+
+            {/* Preview */}
+            {(title || body) && (
+              <div className={`mt-2 rounded-lg border px-4 py-3 flex items-start gap-3 ${typeConfig[type].cls}`}>
+                <Megaphone className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold">{title || 'Announcement title'}</p>
+                  {body && <p className="text-xs opacity-80 mt-0.5 leading-relaxed">{body}</p>}
+                  <p className="text-xs opacity-60 mt-1">Preview — will appear to all users</p>
+                </div>
+              </div>
+            )}
+          </form>
+        </div>
+      )}
+
+      {/* ── Existing announcements ── */}
+      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-semibold text-gray-700 text-sm">Published Announcements</h3>
+          <span className="text-xs text-gray-400">{announcements.length} total</span>
+        </div>
+
+        {loading ? (
+          <div className="p-6 space-y-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+        ) : announcements.length === 0 ? (
+          <div className="text-center py-14">
+            <Megaphone className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No announcements yet</p>
+            <p className="text-xs text-gray-400 mt-1">Click "New Announcement" to publish your first one.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {announcements.map(ann => {
+              const cfg = typeConfig[ann.type];
+              return (
+                <div key={ann.id} className="px-6 py-4 flex items-start gap-4 hover:bg-gray-50/50">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${cfg.bg}`}>
+                    <Megaphone className={`w-4 h-4 ${cfg.cls.split(' ')[0]}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <p className="text-sm font-semibold text-gray-800 truncate">{ann.title}</p>
+                      <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border ${cfg.cls}`}>
+                        {cfg.label}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">{ann.body}</p>
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <span className="flex items-center gap-1 text-xs text-gray-400">
+                        <Clock className="w-3 h-3" /> {fmtDate(ann.createdAt)}
+                      </span>
+                      {ann.expiresAt && (
+                        <span className="text-xs text-amber-600">Expires {new Date(ann.expiresAt).toLocaleDateString()}</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDelete(ann.id)}
+                    disabled={deleting === ann.id}
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40 shrink-0"
+                    title="Remove announcement"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

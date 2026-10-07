@@ -20,7 +20,7 @@ import {
 
 import {
   AdminDashboard, TopicApproval, SupervisorAllocation, ReportGeneration,
-  AdminProfile,
+  AdminProfile, AdminAnnouncements,
 } from './components/AdminScreens';
 
 function AppRouter() {
@@ -67,6 +67,7 @@ function AppRouter() {
         case 'dashboard':             return <AdminDashboard onNavigate={handleNavigate} />;
         case 'topic-approval':        return <TopicApproval onNavigate={handleNavigate} />;
         case 'supervisor-allocation': return <SupervisorAllocation onNavigate={handleNavigate} />;
+        case 'announcements':         return <AdminAnnouncements onNavigate={handleNavigate} />;
         case 'report-generation':     return <ReportGeneration onNavigate={handleNavigate} />;
         case 'my-profile':            return <AdminProfile onNavigate={handleNavigate} />;
         default:                      return <AdminDashboard onNavigate={handleNavigate} />;

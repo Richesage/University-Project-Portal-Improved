@@ -113,6 +113,20 @@ export interface Submission {
   uploadedAt: string;
   status: SubmissionStatus;
   feedback?: string;
+  mark?: number;       // 0-100
+  weight?: number;     // percentage weight toward final grade (e.g. 20)
+  gradedAt?: string;
+}
+
+export interface StudentGradeSummary {
+  studentId: string;
+  studentName: string;
+  regNo: string;
+  projectTitle: string;
+  submissions: Submission[];
+  finalMark: number | null;   // weighted average 0-100
+  letterGrade: string | null; // A, B, C, D, F
+  gradeStatus: 'not_started' | 'in_progress' | 'finalized';
 }
 
 // ─── Messaging ────────────────────────────────────────────────────────────────
@@ -183,6 +197,7 @@ export interface LecturerStats {
   assignedStudents: number;
   activeProjects: number;
   pendingReviews: number;
+  pendingRequests: number;
   workloadPercent: number;
 }
 
@@ -240,6 +255,32 @@ export interface LecturerProfile {
   allowStudentsToSeeCapacity: boolean;
   requirePlagiarismCheck: boolean;
   plagiarismThreshold: number;
+}
+
+// ─── Announcements ────────────────────────────────────────────────────────────
+export type AnnouncementType = 'info' | 'warning' | 'success' | 'urgent';
+
+export interface Announcement {
+  id: string;
+  title: string;
+  body: string;
+  type: AnnouncementType;
+  createdBy: string;
+  createdAt: string;
+  expiresAt?: string;
+}
+
+// ─── Activity feed (bell dropdown) ───────────────────────────────────────────
+export type ActivityCategory = 'supervision' | 'topic' | 'student' | 'allocation' | 'announcement' | 'submission';
+
+export interface ActivityItem {
+  id: string;
+  category: ActivityCategory;
+  title: string;
+  description: string;
+  timestamp: string;
+  read: boolean;
+  navigateTo?: string;
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

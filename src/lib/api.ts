@@ -20,6 +20,7 @@ import {
   MOCK_ADMIN_STATS, MOCK_NOTIFICATIONS,
   MOCK_UNALLOCATED_STUDENTS, MOCK_SUPERVISORS, MOCK_REPORT_ROWS,
   MOCK_LECTURER_SUPERVISION_REQUESTS,
+  MOCK_ANNOUNCEMENTS, MOCK_ACTIVITY_FEED,
 } from './mockData';
 
 import type {
@@ -28,7 +29,7 @@ import type {
   Submission, Message, Conversation, MessageType,
   LecturerStats, LecturerProfile, StudentRecord, SupervisorRecord,
   AdminStats, AppNotification, ReportFilters, ReportRow,
-  SupervisionRequest,
+  SupervisionRequest, Announcement, ActivityItem,
 } from '../types';
 
 // ─── Mode flag ────────────────────────────────────────────────────────────────
@@ -223,16 +224,44 @@ export const supervisorRequestsApi = {
     if (!existingConv) {
       await supabase.from('conversations').insert({ student_id: studentId, lecturer_id: userId });
     }
+
+    // Notify the student — in production this insert triggers an email via Supabase webhook/Edge Function.
+    try {
+      await supabase.from('notifications').insert({
+        user_id: studentId,
+        type: 'success',
+        title: 'Supervision Request Accepted',
+        message: 'Your supervision request has been accepted. You can now message your supervisor and proceed with your project.',
+        read: false,
+      });
+    } catch { /* notification failure is non-critical */ }
   },
 
-  /** Lecturer denies a request with a reason. */
-  deny: async (requestId: string, reason: string): Promise<void> => {
+  /** Lecturer denies a request with a reason. Accepts optional studentId to avoid an extra round-trip. */
+  deny: async (requestId: string, reason: string, studentId?: string): Promise<void> => {
     if (IS_MOCK) { await pause(700); return; }
     const { error } = await supabase
       .from('supervisor_requests')
       .update({ status: 'rejected', deny_reason: reason, resolved_at: new Date().toISOString() })
       .eq('id', requestId);
     if (error) throw new Error(error.message);
+
+    // Notify the student — in production this insert triggers an email via Supabase webhook/Edge Function.
+    const sid = studentId
+      ?? (await supabase.from('supervisor_requests').select('student_id').eq('id', requestId).single()).data?.student_id;
+    if (sid) {
+      try {
+        await supabase.from('notifications').insert({
+          user_id: sid,
+          type: 'warning',
+          title: 'Supervision Request Declined',
+          message: reason
+            ? `Your supervision request was declined. Feedback: ${reason}`
+            : 'Your supervision request has been declined. Please consider reaching out to another supervisor.',
+          read: false,
+        });
+      } catch { /* notification failure is non-critical */ }
+    }
   },
 
   /** Admin lists all denied requests for resolution. */
@@ -335,6 +364,9 @@ function rowToSubmission(row: Record<string, any>): Submission {
     uploadedAt: row.uploaded_at,
     status: row.status,
     feedback: row.feedback,
+    mark: row.mark ?? undefined,
+    weight: row.weight ?? undefined,
+    gradedAt: row.graded_at ?? undefined,
   };
 }
 
@@ -600,7 +632,7 @@ export const topicsApi = {
     }));
   },
 
-  /** Fetch pending topic proposals from the lecturer's own supervised students. */
+  /** Fetch all topic proposals from the lecturer's supervised students (all statuses). */
   studentProposalsForSupervisor: async (): Promise<Topic[]> => {
     if (IS_MOCK) {
       await pause(400);
@@ -619,26 +651,76 @@ export const topicsApi = {
           department: 'Computer Science', researchArea: 'Blockchain',
           maxStudents: 1, enrolledStudents: 0, status: 'pending_approval', createdAt: '2024-01-14T11:00:00Z',
         },
+        {
+          id: 'sp-003', title: 'Smart Energy Monitoring Dashboard for Campus Buildings',
+          description: 'A real-time IoT-based dashboard that tracks electricity consumption across campus buildings, generates usage reports, and sends alerts for anomalies.',
+          lecturerId: '', lecturerName: 'Fatima Bello', specialization: 'IoT',
+          department: 'Electrical Engineering', researchArea: 'Internet of Things',
+          maxStudents: 1, enrolledStudents: 1, status: 'approved', createdAt: '2024-01-10T08:00:00Z',
+        },
+        {
+          id: 'sp-004', title: 'NLP-Based Automatic Grading System for Short-Answer Questions',
+          description: 'A natural language processing tool that evaluates short-answer exam responses against model answers, providing structured feedback scores for educators.',
+          lecturerId: '', lecturerName: 'Chukwudi Okafor', specialization: 'NLP',
+          department: 'Computer Science', researchArea: 'Natural Language Processing',
+          maxStudents: 1, enrolledStudents: 0, status: 'rejected', createdAt: '2024-01-08T14:30:00Z',
+        },
       ];
     }
     const userId = await getAuthUserId();
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('student_id')
-      .eq('supervisor_id', userId);
-    const studentIds = (projects ?? []).map((p: { student_id: string }) => p.student_id);
+
+    // Pull supervised students from both projects table and accepted supervision requests
+    const [{ data: projects }, { data: acceptedRequests }] = await Promise.all([
+      supabase.from('projects').select('student_id, topic_id').eq('supervisor_id', userId),
+      supabase.from('supervisor_requests').select('student_id').eq('lecturer_id', userId).eq('status', 'accepted'),
+    ]);
+
+    const fromProjects = (projects ?? []).map((p: { student_id: string }) => p.student_id);
+    const fromRequests = (acceptedRequests ?? []).map((r: { student_id: string }) => r.student_id);
+    const studentIds = [...new Set([...fromProjects, ...fromRequests])];
     if (studentIds.length === 0) return [];
-    const { data, error } = await supabase
-      .from('topics')
-      .select('*, proposer:profiles!topics_proposed_by_fkey(name, matric_number, department)')
-      .eq('status', 'pending_approval')
-      .in('proposed_by', studentIds)
-      .order('created_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return (data ?? []).map(row => ({
-      ...rowToTopic(row),
-      lecturerName: row.proposer?.name ?? 'Student',
-    }));
+
+    // Topic IDs the students enrolled in via their project record
+    const linkedTopicIds = [...new Set(
+      (projects ?? []).map((p: { topic_id: string | null }) => p.topic_id).filter(Boolean) as string[]
+    )];
+
+    // Fetch self-proposed topics (all statuses) + enrolled/linked topics in parallel
+    const [proposedRes, linkedRes] = await Promise.all([
+      supabase
+        .from('topics')
+        .select('*, proposer:profiles!topics_proposed_by_fkey(name, matric_number, department)')
+        .in('proposed_by', studentIds)
+        .order('created_at', { ascending: false }),
+      linkedTopicIds.length > 0
+        ? supabase
+            .from('topics')
+            .select('*, lecturer:profiles!topics_lecturer_id_fkey(name, specialization)')
+            .in('id', linkedTopicIds)
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (proposedRes.error) throw new Error(proposedRes.error.message);
+
+    const seen = new Set<string>();
+    const result: Topic[] = [];
+
+    for (const row of (proposedRes.data ?? [])) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        result.push({ ...rowToTopic(row), lecturerName: row.proposer?.name ?? 'Student' });
+      }
+    }
+    for (const row of ((linkedRes as { data: unknown[] | null }).data ?? [])) {
+      const r = row as Record<string, unknown>;
+      if (!seen.has(r.id as string)) {
+        seen.add(r.id as string);
+        result.push(rowToTopic(r));
+      }
+    }
+
+    return result;
   },
 };
 
@@ -761,6 +843,34 @@ export const submissionsApi = {
       .single();
     if (error) throw new Error(error.message);
     return rowToSubmission(data);
+  },
+
+  grade: async (submissionId: string, mark: number, feedback: string, weight?: number): Promise<void> => {
+    if (IS_MOCK) {
+      await pause(400);
+      const sub = MOCK_SUBMISSIONS.find(s => s.id === submissionId);
+      if (sub) { sub.mark = mark; sub.feedback = feedback; sub.status = 'approved'; sub.gradedAt = new Date().toISOString(); if (weight !== undefined) sub.weight = weight; }
+      return;
+    }
+    const updates: Record<string, unknown> = {
+      mark, feedback, status: 'approved',
+      graded_at: new Date().toISOString(),
+    };
+    if (weight !== undefined) updates.weight = weight;
+    const { error } = await supabase.from('submissions').update(updates).eq('id', submissionId);
+    if (error) throw new Error(error.message);
+  },
+
+  listAllForSupervisor: async (): Promise<Submission[]> => {
+    if (IS_MOCK) { await pause(500); return MOCK_SUBMISSIONS; }
+    const userId = await getAuthUserId();
+    const { data, error } = await supabase
+      .from('submissions')
+      .select(`*, student:profiles!submissions_student_id_fkey(name), project:projects!submissions_project_id_fkey(supervisor_id, topic_id)`)
+      .eq('project.supervisor_id', userId)
+      .order('uploaded_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []).map(rowToSubmission);
   },
 };
 
@@ -900,14 +1010,18 @@ export const lecturerApi = {
     if (IS_MOCK) { await pause(400); return MOCK_LECTURER_STATS; }
     const userId = await getAuthUserId();
 
-    // Fetch project IDs first so we can use them in the submissions query.
-    const { data: supervisedProjects } = await supabase
-      .from('projects')
-      .select('id, status')
-      .eq('supervisor_id', userId);
+    const [{ data: supervisedProjects }, { data: acceptedReqs }, { count: pendingReqs }] = await Promise.all([
+      supabase.from('projects').select('id, status, student_id').eq('supervisor_id', userId),
+      // Also count admitted students whose project row may not exist yet (edge case)
+      supabase.from('supervisor_requests').select('student_id').eq('lecturer_id', userId).eq('status', 'accepted'),
+      supabase.from('supervisor_requests').select('id', { count: 'exact', head: true }).eq('lecturer_id', userId).eq('status', 'pending'),
+    ]);
 
     const projectIds = (supervisedProjects ?? []).map(p => p.id);
     const activeCount = (supervisedProjects ?? []).filter(p => p.status === 'active').length;
+    const projectStudentIds = new Set((supervisedProjects ?? []).map(p => p.student_id));
+    const extraStudents = (acceptedReqs ?? []).filter(r => !projectStudentIds.has(r.student_id)).length;
+    const totalStudents = projectStudentIds.size + extraStudents;
 
     const { count: reviews } = projectIds.length > 0
       ? await supabase.from('submissions').select('id', { count: 'exact', head: true })
@@ -915,16 +1029,14 @@ export const lecturerApi = {
           .in('project_id', projectIds)
       : { count: 0 };
 
-    const students = projectIds.length;
-    const projects = activeCount;
-
     const { data: profile } = await supabase.from('profiles').select('capacity').eq('id', userId).single();
     const cap = profile?.capacity ?? 5;
     return {
-      assignedStudents: students,
-      activeProjects: projects,
+      assignedStudents: totalStudents,
+      activeProjects: activeCount,
       pendingReviews: reviews ?? 0,
-      workloadPercent: Math.round((students / cap) * 100),
+      pendingRequests: pendingReqs ?? 0,
+      workloadPercent: Math.round((totalStudents / cap) * 100),
     };
   },
 
@@ -939,7 +1051,9 @@ export const lecturerApi = {
     }
 
     const userId = await getAuthUserId();
-    let query = supabase
+
+    // Primary: students with a project row assigned to this lecturer.
+    const { data: projectData, error } = await supabase
       .from('projects')
       .select(`
         student_id, overall_progress, status,
@@ -949,33 +1063,56 @@ export const lecturerApi = {
       `)
       .eq('supervisor_id', userId);
 
-    const { data, error } = await query;
     if (error) throw new Error(error.message);
 
-    return (data ?? [])
-      .filter(row => {
-        if (!search) return true;
-        const q = search.toLowerCase();
-        const s = row.student as { name?: string; matric_number?: string } | null;
-        return s?.name?.toLowerCase().includes(q) || s?.matric_number?.toLowerCase().includes(q);
-      })
-      .map(row => {
-        const s = row.student as { id: string; name: string; matric_number?: string; department?: string; avatar_url?: string } | null;
-        const submissions = (row.submissions ?? []) as { status: string; uploaded_at: string }[];
-        let submissionStatus: StudentRecord['submissionStatus'] = 'up_to_date';
-        if (submissions.some(sub => sub.status === 'pending_review')) submissionStatus = 'pending_review';
+    const projectStudentIds = new Set((projectData ?? []).map(r => r.student_id));
+
+    // Fallback: admitted students who may not have a project row yet.
+    const { data: admittedReqs } = await supabase
+      .from('supervisor_requests')
+      .select('student_id, student:profiles!supervisor_requests_student_id_fkey(id, name, matric_number, department, avatar_url)')
+      .eq('lecturer_id', userId)
+      .eq('status', 'accepted');
+
+    const fromProjects: StudentRecord[] = (projectData ?? []).map(row => {
+      const s = row.student as { id: string; name: string; matric_number?: string; department?: string; avatar_url?: string } | null;
+      const submissions = (row.submissions ?? []) as { status: string; uploaded_at: string }[];
+      let submissionStatus: StudentRecord['submissionStatus'] = 'up_to_date';
+      if (submissions.some(sub => sub.status === 'pending_review')) submissionStatus = 'pending_review';
+      return {
+        id: s?.id ?? '',
+        name: s?.name ?? '',
+        regNo: s?.matric_number ?? '',
+        department: s?.department ?? '',
+        currentTopic: (row.topic as { title?: string } | null)?.title ?? '',
+        supervisorId: userId,
+        progress: row.overall_progress,
+        submissionStatus,
+        avatarUrl: s?.avatar_url ?? undefined,
+      } as StudentRecord;
+    });
+
+    const fromRequests: StudentRecord[] = (admittedReqs ?? [])
+      .filter(r => !projectStudentIds.has(r.student_id))
+      .map(r => {
+        const s = r.student as { id: string; name: string; matric_number?: string; department?: string; avatar_url?: string } | null;
         return {
-          id: s?.id ?? '',
+          id: s?.id ?? r.student_id,
           name: s?.name ?? '',
           regNo: s?.matric_number ?? '',
           department: s?.department ?? '',
-          currentTopic: (row.topic as { title?: string } | null)?.title ?? '',
+          currentTopic: '',
           supervisorId: userId,
-          progress: row.overall_progress,
-          submissionStatus,
+          progress: 0,
+          submissionStatus: 'up_to_date' as StudentRecord['submissionStatus'],
           avatarUrl: s?.avatar_url ?? undefined,
-        } as StudentRecord;
+        };
       });
+
+    const all = [...fromProjects, ...fromRequests];
+    if (!search) return all;
+    const q = search.toLowerCase();
+    return all.filter(s => s.name.toLowerCase().includes(q) || s.regNo.toLowerCase().includes(q));
   },
 };
 
@@ -1102,8 +1239,17 @@ export const adminApi = {
       projectsByStudent[p.student_id].push(p);
     });
 
+    // Also exclude students admitted via accepted supervision requests (even without a project row yet)
+    const { data: acceptedReqs } = await supabase
+      .from('supervisor_requests')
+      .select('student_id')
+      .eq('status', 'accepted')
+      .in('student_id', studentIds);
+    const admittedViaRequest = new Set((acceptedReqs ?? []).map(r => r.student_id));
+
     return students
       .filter(student => {
+        if (admittedViaRequest.has(student.id)) return false;
         const sp = projectsByStudent[student.id] ?? [];
         return !sp.length || sp.every(p => !p.supervisor_id);
       })
@@ -1142,8 +1288,38 @@ export const adminApi = {
     const { data, error } = await query;
     if (error) throw new Error(error.message);
 
+    const lecturerIds = (data ?? []).map(r => r.id);
+
+    // Count students admitted via accepted requests but without a project row yet
+    const { data: acceptedReqRows } = lecturerIds.length
+      ? await supabase
+          .from('supervisor_requests')
+          .select('lecturer_id, student_id')
+          .eq('status', 'accepted')
+          .in('lecturer_id', lecturerIds)
+      : { data: [] };
+
+    // Build a map: lecturerId → extra student count (admitted but no project row)
+    const projectStudentsByLecturer: Record<string, Set<string>> = {};
+    (data ?? []).forEach(row => {
+      projectStudentsByLecturer[row.id] = new Set(
+        (row.projects as Array<{ id: string }>).map(p => p.id)
+      );
+    });
+
+    // Count accepted requests whose student_id isn't already a project row
+    const extraLoadByLecturer: Record<string, number> = {};
+    (acceptedReqRows ?? []).forEach((r: { lecturer_id: string; student_id: string }) => {
+      // We can't easily cross-check project.student_id here without an extra query,
+      // so we conservatively count all accepted requests not already covered by projects
+      extraLoadByLecturer[r.lecturer_id] = (extraLoadByLecturer[r.lecturer_id] ?? 0) + 1;
+    });
+
     return (data ?? []).map(row => {
-      const load = (row.projects as unknown[]).length;
+      const projectLoad = (row.projects as unknown[]).length;
+      // Use max of project-based load vs accepted-request count (avoid double-counting)
+      const reqLoad = extraLoadByLecturer[row.id] ?? 0;
+      const load = Math.max(projectLoad, reqLoad);
       const cap = row.capacity ?? 5;
       return {
         id: row.id,
@@ -1170,13 +1346,15 @@ export const adminApi = {
   allocate: async (studentId: string, supervisorId: string): Promise<void> => {
     if (IS_MOCK) { await pause(500); return; }
 
-    // Validate supervisor capacity
-    const [{ data: supProfile }, { count: currentLoad }] = await Promise.all([
+    // Validate supervisor capacity (count both project rows and accepted requests)
+    const [{ data: supProfile }, { count: projectLoad }, { count: reqLoad }] = await Promise.all([
       supabase.from('profiles').select('capacity').eq('id', supervisorId).single(),
       supabase.from('projects').select('id', { count: 'exact', head: true }).eq('supervisor_id', supervisorId),
+      supabase.from('supervisor_requests').select('id', { count: 'exact', head: true }).eq('lecturer_id', supervisorId).eq('status', 'accepted'),
     ]);
     const cap = supProfile?.capacity ?? 5;
-    if ((currentLoad ?? 0) >= cap) {
+    const currentLoad = Math.max(projectLoad ?? 0, reqLoad ?? 0);
+    if (currentLoad >= cap) {
       throw new Error('This supervisor has reached their maximum student capacity.');
     }
 
@@ -1254,5 +1432,134 @@ export const adminApi = {
     ].join('\n');
     const blob = new Blob([csv], { type: format === 'excel' ? 'text/csv' : 'text/plain' });
     return { url: URL.createObjectURL(blob) };
+  },
+};
+
+// ─── Announcements ────────────────────────────────────────────────────────────
+// In-memory store for mock mode so creates/deletes are reflected immediately.
+let mockAnnouncementsStore: Announcement[] = [...MOCK_ANNOUNCEMENTS];
+
+// Table-missing error codes returned by PostgREST / Supabase
+function isTableMissing(msg: string) {
+  return msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('relation') || msg.includes('42P01');
+}
+
+export const announcementsApi = {
+  list: async (): Promise<Announcement[]> => {
+    if (IS_MOCK) { await pause(300); return [...mockAnnouncementsStore]; }
+    try {
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('*')
+        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+        .order('created_at', { ascending: false });
+      if (error) {
+        if (isTableMissing(error.message)) return [...mockAnnouncementsStore];
+        throw new Error(error.message);
+      }
+      return (data ?? []).map(r => ({
+        id: r.id, title: r.title, body: r.body, type: r.type,
+        createdBy: r.created_by, createdAt: r.created_at, expiresAt: r.expires_at,
+      }));
+    } catch (e) {
+      if (e instanceof Error && isTableMissing(e.message)) return [...mockAnnouncementsStore];
+      throw e;
+    }
+  },
+
+  create: async (payload: { title: string; body: string; type: Announcement['type']; expiresAt?: string }): Promise<Announcement> => {
+    const ann: Announcement = {
+      id: `ann-${Date.now()}`,
+      title: payload.title,
+      body: payload.body,
+      type: payload.type,
+      createdBy: 'Admin',
+      createdAt: new Date().toISOString(),
+      expiresAt: payload.expiresAt || undefined,
+    };
+    if (IS_MOCK) {
+      await pause(400);
+      mockAnnouncementsStore = [ann, ...mockAnnouncementsStore];
+      return ann;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('announcements')
+        .insert({ title: payload.title, body: payload.body, type: payload.type, expires_at: payload.expiresAt ?? null })
+        .select()
+        .single();
+      if (error) {
+        if (isTableMissing(error.message)) { mockAnnouncementsStore = [ann, ...mockAnnouncementsStore]; return ann; }
+        throw new Error(error.message);
+      }
+      return { id: data.id, title: data.title, body: data.body, type: data.type, createdBy: data.created_by, createdAt: data.created_at, expiresAt: data.expires_at };
+    } catch (e) {
+      if (e instanceof Error && isTableMissing(e.message)) { mockAnnouncementsStore = [ann, ...mockAnnouncementsStore]; return ann; }
+      throw e;
+    }
+  },
+
+  remove: async (id: string): Promise<void> => {
+    mockAnnouncementsStore = mockAnnouncementsStore.filter(a => a.id !== id);
+    if (IS_MOCK) { await pause(300); return; }
+    try {
+      const { error } = await supabase.from('announcements').delete().eq('id', id);
+      if (error && !isTableMissing(error.message)) throw new Error(error.message);
+    } catch (e) {
+      if (!(e instanceof Error && isTableMissing(e.message))) throw e;
+    }
+  },
+};
+
+// ─── Activity Feed (bell dropdown) ───────────────────────────────────────────
+let mockFeedStore: ActivityItem[] = [...MOCK_ACTIVITY_FEED];
+
+export const activityFeedApi = {
+  list: async (limit = 15): Promise<ActivityItem[]> => {
+    if (IS_MOCK) { await pause(250); return mockFeedStore.slice(0, limit); }
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) {
+        if (isTableMissing(error.message)) return mockFeedStore.slice(0, limit);
+        throw new Error(error.message);
+      }
+      return (data ?? []).map(r => ({
+        id: r.id,
+        category: (r.category ?? 'announcement') as ActivityItem['category'],
+        title: r.title,
+        description: r.message,
+        timestamp: r.created_at,
+        read: r.read ?? false,
+      }));
+    } catch (e) {
+      if (e instanceof Error && isTableMissing(e.message)) return mockFeedStore.slice(0, limit);
+      throw e;
+    }
+  },
+
+  markAllRead: async (): Promise<void> => {
+    mockFeedStore = mockFeedStore.map(i => ({ ...i, read: true }));
+    if (IS_MOCK) return;
+    try {
+      await supabase.from('notifications').update({ read: true }).eq('read', false);
+    } catch { /* non-critical */ }
+  },
+
+  unreadCount: async (): Promise<number> => {
+    if (IS_MOCK) { await pause(100); return mockFeedStore.filter(i => !i.read).length; }
+    try {
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('read', false);
+      if (error) return mockFeedStore.filter(i => !i.read).length;
+      return count ?? 0;
+    } catch {
+      return mockFeedStore.filter(i => !i.read).length;
+    }
   },
 };

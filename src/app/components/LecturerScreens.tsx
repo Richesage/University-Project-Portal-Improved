@@ -6,7 +6,7 @@ import {
   UserCheck, Award, BookOpen, PenLine, Save,
   Calendar, Link2, MapPin, Radio, Star,
   ExternalLink, Megaphone, Phone, ChevronDown, ChevronLeft, User,
-  ThumbsUp, ThumbsDown, Eye, Smile,
+  ThumbsUp, ThumbsDown, Eye, Smile, XCircle, ClipboardList,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
@@ -99,18 +99,41 @@ const PLATFORM_ICONS: Record<string, string> = {
 // ─── LecturerDashboard ────────────────────────────────────────────────────────
 export function LecturerDashboard({ onNavigate }: ScreenProps) {
   const { user } = useAuth();
-  const [stats, setStats] = useState({ assignedStudents: 0, activeProjects: 0, pendingReviews: 0, workloadPercent: 0 });
+  const [stats, setStats] = useState<{ assignedStudents: number; activeProjects: number; pendingReviews: number; pendingRequests: number; workloadPercent: number }>({
+    assignedStudents: 0, activeProjects: 0, pendingReviews: 0, pendingRequests: 0, workloadPercent: 0,
+  });
+  const [recentReqs, setRecentReqs] = useState<SupervisionRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    lecturerApi.stats().then(setStats).finally(() => setLoading(false));
+    Promise.all([
+      lecturerApi.stats(),
+      supervisorRequestsApi.listForLecturer(),
+    ]).then(([s, reqs]) => {
+      setStats(s);
+      const sorted = [...reqs].sort((a, b) => {
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (b.status === 'pending' && a.status !== 'pending') return 1;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+      setRecentReqs(sorted.slice(0, 5));
+    }).finally(() => setLoading(false));
   }, []);
 
   const cards = [
-    { label: 'Assigned Students', value: stats.assignedStudents, icon: Users,    color: 'text-[#312DC4]',   bg: 'bg-[#EEEDFB]' },
-    { label: 'Active Projects',   value: stats.activeProjects,   icon: FileText, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Pending Reviews',   value: stats.pendingReviews,   icon: Clock,    color: 'text-amber-600',   bg: 'bg-amber-50' },
+    { label: 'Assigned Students', value: stats.assignedStudents, icon: Users,      color: 'text-[#312DC4]',   bg: 'bg-[#EEEDFB]',  screen: 'view-students' },
+    { label: 'Active Projects',   value: stats.activeProjects,   icon: FileText,   color: 'text-emerald-600', bg: 'bg-emerald-50', screen: 'view-students' },
+    { label: 'Pending Reviews',   value: stats.pendingReviews,   icon: Clock,      color: 'text-amber-600',   bg: 'bg-amber-50',   screen: 'topic-approval' },
+    { label: 'Incoming Requests', value: stats.pendingRequests,  icon: UserCheck,  color: 'text-violet-600',  bg: 'bg-violet-50',  screen: 'student-requests' },
   ];
+
+  const reqBadge = (status: string) => ({
+    pending:  'bg-amber-50 text-amber-700',
+    accepted: 'bg-emerald-50 text-emerald-700',
+    rejected: 'bg-red-50 text-red-600',
+  }[status] ?? 'bg-gray-100 text-gray-600');
+
+  const reqLabel = (status: string) => ({ pending: 'Pending', accepted: 'Admitted', rejected: 'Denied' }[status] ?? status);
 
   return (
     <div className="space-y-6">
@@ -119,54 +142,120 @@ export function LecturerDashboard({ onNavigate }: ScreenProps) {
         <p className="text-sm text-gray-500 mt-0.5">{user?.specialization ?? 'Faculty Member'}</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* ── Stat Cards ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {cards.map((card) => (
-          <div key={card.label} className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-4">
-            <div className={`w-11 h-11 ${card.bg} rounded-lg flex items-center justify-center shrink-0`}>
+          <button
+            key={card.label}
+            onClick={() => onNavigate(card.screen)}
+            className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-3 hover:border-[#C5C3EC] hover:shadow-sm transition-all text-left"
+          >
+            <div className={`w-10 h-10 ${card.bg} rounded-lg flex items-center justify-center shrink-0`}>
               <card.icon className={`w-5 h-5 ${card.color}`} />
             </div>
             <div>
               <p className="text-2xl font-bold text-gray-800">{loading ? '—' : card.value}</p>
-              <p className="text-xs text-gray-500">{card.label}</p>
+              <p className="text-xs text-gray-500 leading-tight">{card.label}</p>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
+      {/* ── Workload ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold text-gray-700">Workload Capacity</h3>
-          <span className="text-lg font-bold text-[#312DC4]">{loading ? '—' : stats.workloadPercent}%</span>
+          <span className={`text-lg font-bold ${stats.workloadPercent >= 90 ? 'text-red-500' : stats.workloadPercent >= 70 ? 'text-amber-500' : 'text-[#312DC4]'}`}>
+            {loading ? '—' : stats.workloadPercent}%
+          </span>
         </div>
         <div className="w-full bg-gray-100 rounded-full h-3">
           <div
             className={`h-3 rounded-full transition-all duration-700 ${stats.workloadPercent >= 90 ? 'bg-red-500' : stats.workloadPercent >= 70 ? 'bg-amber-500' : 'bg-[#312DC4]'}`}
-            style={{ width: `${stats.workloadPercent}%` }}
+            style={{ width: `${Math.min(stats.workloadPercent, 100)}%` }}
           />
         </div>
-        <p className="text-xs text-gray-400 mt-1">{stats.workloadPercent >= 90 ? 'Near capacity — review workload settings.' : 'Within acceptable range.'}</p>
+        <p className="text-xs text-gray-400 mt-1">
+          {stats.workloadPercent >= 90 ? 'Near capacity — review your workload settings.' :
+           stats.workloadPercent >= 70 ? 'Getting busy — monitor new requests carefully.' :
+           'Within acceptable range.'}
+        </p>
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h3 className="font-semibold text-gray-700 mb-4">Quick Actions</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'My Profile',          screen: 'my-profile',       icon: UserCheck },
-            { label: 'Student Requests',    screen: 'student-requests', icon: Users },
-            { label: 'Upload Topic',        screen: 'topic-upload',     icon: Upload },
-            { label: 'My Students',         screen: 'view-students',    icon: BookOpen },
-            { label: 'Workload',            screen: 'workload',         icon: BarChart2 },
-            { label: 'Messages',            screen: 'messages',         icon: MessageSquare },
-          ].map((a) => (
-            <button
-              key={a.screen}
-              onClick={() => onNavigate(a.screen)}
-              className="flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-200 hover:border-[#C5C3EC] hover:bg-[#EEEDFB] transition-colors"
-            >
-              <a.icon className="w-5 h-5 text-[#312DC4]" />
-              <span className="text-xs font-medium text-gray-700 text-center">{a.label}</span>
-            </button>
-          ))}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ── Recent Supervision Requests ── */}
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <h3 className="font-semibold text-gray-700 text-sm">Recent Supervision Requests</h3>
+            <button onClick={() => onNavigate('student-requests')} className="text-xs font-medium text-[#312DC4] hover:underline">View all</button>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {loading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="px-5 py-4"><Skeleton className="h-4 w-full" /></div>
+              ))
+            ) : recentReqs.length === 0 ? (
+              <div className="px-5 py-8 text-center">
+                <Users className="w-7 h-7 text-gray-200 mx-auto mb-2" />
+                <p className="text-xs text-gray-400">No supervision requests yet.</p>
+              </div>
+            ) : recentReqs.map((req) => {
+              const initials = req.studentName.split(' ').map(w => w[0]).join('').slice(0, 2);
+              return (
+                <div key={req.id} className="px-5 py-3.5 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-[#EEEDFB] border border-[#C5C3EC] flex items-center justify-center text-xs font-bold text-[#312DC4] shrink-0 overflow-hidden">
+                    {req.studentAvatarUrl
+                      ? <img src={req.studentAvatarUrl} alt={req.studentName} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      : initials
+                    }
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800 truncate">{req.studentName}</p>
+                    <p className="text-xs text-gray-500 truncate">{req.topicInterest}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${reqBadge(req.status)}`}>
+                      {reqLabel(req.status)}
+                    </span>
+                    {req.status === 'pending' && (
+                      <button onClick={() => onNavigate('student-requests')} className="text-xs font-medium text-[#312DC4] hover:underline">
+                        Review
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Quick Actions ── */}
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-700 text-sm mb-4">Quick Actions</h3>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: 'Student Requests', screen: 'student-requests', icon: UserCheck,    badge: stats.pendingRequests > 0 ? stats.pendingRequests : undefined },
+              { label: 'Topic Approval',   screen: 'topic-approval',   icon: ClipboardList, badge: stats.pendingReviews > 0 ? stats.pendingReviews : undefined },
+              { label: 'My Students',      screen: 'view-students',    icon: BookOpen },
+              { label: 'Upload Topic',     screen: 'topic-upload',     icon: Upload },
+              { label: 'Workload',         screen: 'workload',         icon: BarChart2 },
+              { label: 'Messages',         screen: 'messages',         icon: MessageSquare },
+            ].map((a) => (
+              <button
+                key={a.screen}
+                onClick={() => onNavigate(a.screen)}
+                className="relative flex flex-col items-center gap-2 p-4 rounded-lg border border-gray-200 hover:border-[#C5C3EC] hover:bg-[#EEEDFB] transition-colors"
+              >
+                {a.badge !== undefined && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                    {a.badge > 9 ? '9+' : a.badge}
+                  </span>
+                )}
+                <a.icon className="w-5 h-5 text-[#312DC4]" />
+                <span className="text-xs font-medium text-gray-700 text-center">{a.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -568,6 +657,9 @@ export function StudentSupervisionRequests({ onNavigate }: ScreenProps) {
       await supervisorRequestsApi.admit(req.id, req.studentId);
       setRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: 'accepted' } : r));
       setViewingRequest(null);
+      toast.success(`${req.studentName} admitted`, {
+        description: 'A notification email has been sent to the student.',
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to admit student.');
     } finally {
@@ -577,13 +669,17 @@ export function StudentSupervisionRequests({ onNavigate }: ScreenProps) {
 
   const handleDeny = async () => {
     if (!denyModal) return;
+    const studentName = denyModal.studentName;
     setProcessing(denyModal.id);
     try {
-      await supervisorRequestsApi.deny(denyModal.id, denyReason);
+      await supervisorRequestsApi.deny(denyModal.id, denyReason, denyModal.studentId);
       setRequests(prev => prev.map(r => r.id === denyModal.id ? { ...r, status: 'rejected', denyReason } : r));
       setDenyModal(null);
       setDenyReason('');
       setViewingRequest(null);
+      toast.success('Request denied', {
+        description: `${studentName} has been notified by email.`,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to deny request.');
     } finally {
@@ -1076,19 +1172,38 @@ export function ViewAssignedStudents({ onNavigate }: ScreenProps) {
 
 // ─── SupervisorWorkloadTracking ───────────────────────────────────────────────
 export function SupervisorWorkloadTracking({ onNavigate: _onNavigate }: ScreenProps) {
+  const { user } = useAuth();
   const [students, setStudents] = useState<StudentRecord[]>([]);
-  const [stats, setStats] = useState({ assignedStudents: 0, activeProjects: 0, pendingReviews: 0, workloadPercent: 0 });
+  const [stats, setStats] = useState<{ assignedStudents: number; activeProjects: number; pendingReviews: number; pendingRequests: number; workloadPercent: number }>({
+    assignedStudents: 0, activeProjects: 0, pendingReviews: 0, pendingRequests: 0, workloadPercent: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [editingCapacity, setEditingCapacity] = useState(false);
-  const [maxStudents, setMaxStudents] = useState(15);
-  const [tempMax, setTempMax] = useState(15);
+  const [maxStudents, setMaxStudents] = useState(5);
+  const [tempMax, setTempMax] = useState(5);
   const [savingCapacity, setSavingCapacity] = useState(false);
+  const [visibleToStudents, setVisibleToStudents] = useState(true);
+  const [savingVisibility, setSavingVisibility] = useState(false);
 
   useEffect(() => {
-    Promise.all([lecturerApi.students(), lecturerApi.stats()])
-      .then(([s, st]) => { setStudents(s); setStats(st); })
-      .finally(() => setLoading(false));
-  }, []);
+    if (!user?.id) return;
+    Promise.all([
+      lecturerApi.students(),
+      lecturerApi.stats(),
+      profileApi.fetchLecturerProfile(user.id),
+    ]).then(([s, st, profile]) => {
+      setStudents(s);
+      setStats(st);
+      if (profile) {
+        setMaxStudents(profile.maxStudents);
+        setTempMax(profile.maxStudents);
+        setVisibleToStudents(profile.allowStudentsToSeeCapacity);
+      }
+    }).finally(() => setLoading(false));
+  }, [user?.id]);
+
+  const availableSlots = Math.max(0, maxStudents - stats.assignedStudents);
+  const barPercent = maxStudents > 0 ? Math.min(Math.round((stats.assignedStudents / maxStudents) * 100), 100) : 0;
 
   const handleSaveCapacity = async () => {
     setSavingCapacity(true);
@@ -1096,39 +1211,69 @@ export function SupervisorWorkloadTracking({ onNavigate: _onNavigate }: ScreenPr
       await profileApi.updateProfile({ capacity: tempMax });
       setMaxStudents(tempMax);
       setEditingCapacity(false);
+      toast.success('Capacity updated successfully');
+    } catch {
+      toast.error('Failed to save capacity');
     } finally {
       setSavingCapacity(false);
     }
   };
 
+  const handleToggleVisibility = async (value: boolean) => {
+    setSavingVisibility(true);
+    try {
+      await profileApi.updateProfile({ allowStudentsToSeeCapacity: value });
+      setVisibleToStudents(value);
+      toast.success(value ? 'Capacity is now visible to students' : 'Capacity hidden from students');
+    } catch {
+      toast.error('Failed to update visibility setting');
+    } finally {
+      setSavingVisibility(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold text-gray-800">Workload Tracking</h2>
+      <div>
+        <h2 className="text-xl font-semibold text-gray-800">Workload Tracking</h2>
+        <p className="text-sm text-gray-500 mt-0.5">Live supervision load based on current student assignments.</p>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* ── Capacity Card ── */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="font-semibold text-gray-700 mb-4">Supervision Capacity</h3>
           <div className="flex items-end gap-3 mb-3">
-            <span className="text-4xl font-bold text-[#312DC4]">{loading ? '—' : stats.workloadPercent}%</span>
+            <span className={`text-4xl font-bold ${barPercent >= 90 ? 'text-red-500' : barPercent >= 70 ? 'text-amber-500' : 'text-[#312DC4]'}`}>
+              {loading ? '—' : barPercent}%
+            </span>
             <span className="text-sm text-gray-500 mb-1">utilised</span>
           </div>
           <div className="w-full bg-gray-100 rounded-full h-4">
             <div
-              className={`h-4 rounded-full transition-all duration-700 ${stats.workloadPercent >= 90 ? 'bg-red-500' : stats.workloadPercent >= 70 ? 'bg-amber-500' : 'bg-[#312DC4]'}`}
-              style={{ width: `${stats.workloadPercent}%` }}
+              className={`h-4 rounded-full transition-all duration-700 ${barPercent >= 90 ? 'bg-red-500' : barPercent >= 70 ? 'bg-amber-500' : 'bg-[#312DC4]'}`}
+              style={{ width: `${barPercent}%` }}
             />
           </div>
-          <p className="text-xs text-gray-400 mt-2">{stats.assignedStudents} of {maxStudents} maximum student slots filled.</p>
+          <p className="text-xs text-gray-400 mt-2">
+            {loading ? '…' : `${stats.assignedStudents} of ${maxStudents} maximum student slots filled.`}
+            {!loading && availableSlots > 0 && (
+              <span className="text-emerald-600 font-medium"> {availableSlots} slot{availableSlots !== 1 ? 's' : ''} available.</span>
+            )}
+            {!loading && availableSlots === 0 && <span className="text-red-500 font-medium"> No slots available.</span>}
+          </p>
+
+          {/* Edit capacity */}
           <div className="border-t border-gray-100 mt-4 pt-4">
             {editingCapacity ? (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <label className="text-sm text-gray-600 shrink-0">Max students:</label>
                 <input type="number" min={1} max={50} value={tempMax}
                   onChange={(e) => setTempMax(Number(e.target.value))}
                   className="w-20 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#312DC4]" />
                 <button onClick={handleSaveCapacity} disabled={savingCapacity}
-                  className="flex items-center gap-1 px-3 py-1 rounded text-xs font-medium text-white bg-[#312DC4] hover:bg-[#2724b0] disabled:opacity-60">
-                  <Save className="w-3 h-3" /> {savingCapacity ? '…' : 'Save'}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium text-white bg-[#312DC4] hover:bg-[#2724b0] disabled:opacity-60">
+                  <Save className="w-3 h-3" /> {savingCapacity ? 'Saving…' : 'Save'}
                 </button>
                 <button onClick={() => { setEditingCapacity(false); setTempMax(maxStudents); }}
                   className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
@@ -1140,46 +1285,123 @@ export function SupervisorWorkloadTracking({ onNavigate: _onNavigate }: ScreenPr
               </button>
             )}
           </div>
+
+          {/* Visibility toggle */}
+          <div className="border-t border-gray-100 mt-4 pt-4 flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-0.5">
+                <p className="text-xs font-medium text-gray-700">Slot visibility for students</p>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full leading-none ${
+                  visibleToStudents ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {savingVisibility ? '…' : visibleToStudents ? 'ON' : 'OFF'}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400">
+                {visibleToStudents
+                  ? 'Students can see your available slots on the Find Supervisor page.'
+                  : 'Your available slots are hidden from students.'}
+              </p>
+            </div>
+            {/* Toggle switch */}
+            <button
+              role="switch"
+              aria-checked={visibleToStudents}
+              onClick={() => handleToggleVisibility(!visibleToStudents)}
+              disabled={savingVisibility}
+              title={visibleToStudents ? 'Click to hide from students' : 'Click to show to students'}
+              className={[
+                'relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[#312DC4] focus:ring-offset-1 disabled:opacity-50',
+                'w-11 h-6',
+                visibleToStudents ? 'bg-[#312DC4]' : 'bg-gray-300',
+              ].join(' ')}
+            >
+              <span className={[
+                'inline-block w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200',
+                visibleToStudents ? 'translate-x-[22px]' : 'translate-x-[2px]',
+              ].join(' ')} />
+            </button>
+          </div>
         </div>
 
+        {/* ── Summary Card ── */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h3 className="font-semibold text-gray-700 mb-4">Summary</h3>
           <dl className="space-y-3">
             {[
-              { label: 'Assigned Students', value: stats.assignedStudents },
-              { label: 'Active Projects',   value: stats.activeProjects },
-              { label: 'Pending Reviews',   value: stats.pendingReviews },
-              { label: 'Available Slots',   value: Math.max(0, maxStudents - stats.assignedStudents) },
+              { label: 'Maximum Slots',     value: maxStudents,              highlight: false },
+              { label: 'Assigned Students', value: stats.assignedStudents,   highlight: false },
+              { label: 'Available Slots',   value: availableSlots,           highlight: true },
+              { label: 'Active Projects',   value: stats.activeProjects,     highlight: false },
+              { label: 'Pending Reviews',   value: stats.pendingReviews,     highlight: false },
+              { label: 'Pending Requests',  value: stats.pendingRequests,    highlight: false },
             ].map((row) => (
-              <div key={row.label} className="flex justify-between text-sm">
+              <div key={row.label} className="flex justify-between items-center text-sm">
                 <dt className="text-gray-500">{row.label}</dt>
-                <dd className="font-semibold text-gray-800">{loading ? '—' : row.value}</dd>
+                <dd className={`font-semibold ${loading ? 'text-gray-300' : row.highlight && !loading ? (availableSlots > 0 ? 'text-emerald-600' : 'text-red-500') : 'text-gray-800'}`}>
+                  {loading ? '—' : row.value}
+                </dd>
               </div>
             ))}
           </dl>
+          <div className="border-t border-gray-100 mt-4 pt-4">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${availableSlots > 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <span className="text-xs text-gray-500">
+                Status: <span className={`font-medium ${availableSlots > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {loading ? '…' : availableSlots > 0 ? `Accepting students (${availableSlots} slot${availableSlots !== 1 ? 's' : ''} free)` : 'At capacity'}
+                </span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <div className={`w-2 h-2 rounded-full ${visibleToStudents ? 'bg-[#312DC4]' : 'bg-gray-400'}`} />
+              <span className="text-xs text-gray-500">
+                Student visibility: <span className={`font-medium ${visibleToStudents ? 'text-[#312DC4]' : 'text-gray-500'}`}>
+                  {visibleToStudents ? 'Shown on Find Supervisor' : 'Hidden'}
+                </span>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
+      {/* ── Student Progress Overview ── */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <h3 className="font-semibold text-gray-700 mb-4">Student Progress Overview</h3>
         {loading ? (
           <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+        ) : students.length === 0 ? (
+          <div className="py-8 text-center">
+            <Users className="w-8 h-8 text-gray-200 mx-auto mb-2" />
+            <p className="text-sm text-gray-400">No students assigned yet.</p>
+          </div>
         ) : (
           <div className="space-y-3">
             {students.map((s) => (
               <div key={s.id} className="flex items-center gap-4 py-2 border-b border-gray-50 last:border-0">
-                <div className="w-8 h-8 rounded-full bg-[#EEEDFB] flex items-center justify-center text-xs font-bold text-[#312DC4] shrink-0">
-                  {s.name.split(' ').map(w => w[0]).join('').slice(0, 2)}
+                <div className="w-8 h-8 rounded-full bg-[#EEEDFB] flex items-center justify-center text-xs font-bold text-[#312DC4] shrink-0 overflow-hidden">
+                  {s.avatarUrl
+                    ? <img src={s.avatarUrl} alt={s.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    : s.name.split(' ').map(w => w[0]).join('').slice(0, 2)
+                  }
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-800">{s.name}</p>
-                  <p className="text-xs text-gray-400 truncate">{s.currentTopic}</p>
+                  <p className="text-xs text-gray-400 truncate">{s.currentTopic || <span className="italic">No topic assigned yet</span>}</p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-3 shrink-0">
                   <div className="w-24 bg-gray-100 rounded-full h-1.5">
-                    <div className="bg-[#312DC4] h-1.5 rounded-full" style={{ width: `${s.progress}%` }} />
+                    <div className="bg-[#312DC4] h-1.5 rounded-full transition-all" style={{ width: `${s.progress}%` }} />
                   </div>
-                  <span className="text-xs text-gray-600 w-8 text-right">{s.progress}%</span>
+                  <span className="text-xs font-medium text-gray-600 w-9 text-right">{s.progress}%</span>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                    s.submissionStatus === 'pending_review' ? 'bg-amber-50 text-amber-700' :
+                    s.submissionStatus === 'overdue' ? 'bg-red-50 text-red-600' :
+                    'bg-emerald-50 text-emerald-700'
+                  }`}>
+                    {s.submissionStatus === 'pending_review' ? 'Needs review' :
+                     s.submissionStatus === 'overdue' ? 'Overdue' : 'Up to date'}
+                  </span>
                 </div>
               </div>
             ))}
@@ -1711,7 +1933,6 @@ export function LecturerMessaging({ onNavigate: _onNavigate }: ScreenProps) { //
 export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps) {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
-  const [processed, setProcessed] = useState<Record<string, 'approved' | 'rejected'>>({});
   const [viewingTopic, setViewingTopic] = useState<Topic | null>(null);
   const [rejectModal, setRejectModal] = useState<Topic | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -1725,14 +1946,20 @@ export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps
       .finally(() => setLoading(false));
   }, []);
 
-  const pending = topics.filter(t => !processed[t.id]);
-  const done    = topics.filter(t => !!processed[t.id]);
+  // Group by actual status from the DB/API
+  const pending  = topics.filter(t => t.status === 'pending_approval');
+  const approved = topics.filter(t => t.status === 'approved');
+  const rejected = topics.filter(t => t.status === 'rejected');
+  const other    = topics.filter(t => !['pending_approval', 'approved', 'rejected'].includes(t.status));
+
+  const updateTopicStatus = (id: string, status: Topic['status']) =>
+    setTopics(prev => prev.map(t => t.id === id ? { ...t, status } : t));
 
   const handleApprove = async (topic: Topic) => {
     setProcessing(topic.id);
     try {
       await topicsApi.approve(topic.id);
-      setProcessed(p => ({ ...p, [topic.id]: 'approved' }));
+      updateTopicStatus(topic.id, 'approved');
       setViewingTopic(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to approve topic.');
@@ -1744,7 +1971,7 @@ export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps
     setProcessing(rejectModal.id);
     try {
       await topicsApi.reject(rejectModal.id, rejectReason);
-      setProcessed(p => ({ ...p, [rejectModal.id]: 'rejected' }));
+      updateTopicStatus(rejectModal.id, 'rejected');
       setRejectModal(null);
       setRejectReason('');
       setViewingTopic(null);
@@ -1753,19 +1980,81 @@ export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps
     } finally { setProcessing(null); }
   };
 
+  const TopicRow = ({ topic, showActions }: { topic: Topic; showActions: boolean }) => (
+    <div className="p-5 flex items-start gap-4">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-gray-800">{topic.title}</p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Proposed by <span className="font-medium text-gray-700">{topic.lecturerName || topic.specialization || '—'}</span>
+          {topic.department ? ` · ${topic.department}` : ''}
+          {topic.researchArea ? ` · ${topic.researchArea}` : ''}
+        </p>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Submitted {new Date(topic.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+        </p>
+        <p className="text-xs text-gray-600 mt-2 line-clamp-2">{topic.description}</p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={() => setViewingTopic(topic)}
+          className="p-2 text-gray-400 hover:text-[#312DC4] hover:bg-[#EEEDFB] rounded-lg transition-colors"
+          title="View full details"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+        {showActions && (
+          <>
+            <button
+              onClick={() => handleApprove(topic)}
+              disabled={processing === topic.id}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            >
+              <ThumbsUp className="w-3.5 h-3.5" /> {processing === topic.id ? '…' : 'Approve'}
+            </button>
+            <button
+              onClick={() => { setRejectModal(topic); setRejectReason(''); }}
+              disabled={processing === topic.id}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors"
+            >
+              <ThumbsDown className="w-3.5 h-3.5" /> Reject
+            </button>
+          </>
+        )}
+        {!showActions && (
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+            topic.status === 'approved' ? 'bg-emerald-50 text-emerald-700' :
+            topic.status === 'rejected' ? 'bg-red-50 text-red-600' :
+            'bg-gray-100 text-gray-600'
+          }`}>
+            {topic.status === 'approved' ? '✓ Approved' : topic.status === 'rejected' ? '✗ Rejected' : topic.status}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-gray-800">Topic Approval</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Review and approve project topics proposed by your supervised students.</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            All project topics from your supervised students — pending, approved, and rejected.
+          </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           <span className="text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-1 rounded-full">
             {loading ? '…' : pending.length} pending
           </span>
-          {done.length > 0 && (
-            <span className="text-xs font-medium bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">{done.length} reviewed</span>
+          {approved.length > 0 && (
+            <span className="text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full">
+              {approved.length} approved
+            </span>
+          )}
+          {rejected.length > 0 && (
+            <span className="text-xs font-medium bg-red-50 text-red-600 border border-red-200 px-2.5 py-1 rounded-full">
+              {rejected.length} rejected
+            </span>
           )}
         </div>
       </div>
@@ -1782,86 +2071,69 @@ export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps
         </div>
       )}
 
-      {!loading && pending.length === 0 && done.length === 0 && (
+      {!loading && topics.length === 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-10 text-center">
           <CheckCircle className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-          <p className="text-gray-600 font-medium">No pending topic proposals from your students.</p>
-          <p className="text-xs text-gray-400 mt-1">When an admitted student submits a topic proposal, it will appear here for your review.</p>
+          <p className="text-gray-600 font-medium">No topic proposals from your students yet.</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Topics from admitted students will appear here once they submit a proposal.
+          </p>
         </div>
       )}
 
+      {/* ── Pending Review ── */}
       {pending.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 bg-amber-50">
+          <div className="px-6 py-4 border-b border-gray-100 bg-amber-50 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600" />
             <p className="text-sm font-medium text-amber-800">Pending Review ({pending.length})</p>
           </div>
           <div className="divide-y divide-gray-100">
-            {pending.map((topic) => (
-              <div key={topic.id} className="p-5 flex items-start gap-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-800">{topic.title}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Proposed by <span className="font-medium text-gray-700">{topic.lecturerName}</span>
-                    {topic.department ? ` · ${topic.department}` : ''}
-                    {topic.researchArea ? ` · ${topic.researchArea}` : ''}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Submitted {new Date(topic.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                  </p>
-                  <p className="text-xs text-gray-600 mt-2 line-clamp-2">{topic.description}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => setViewingTopic(topic)}
-                    className="p-2 text-gray-400 hover:text-[#312DC4] hover:bg-[#EEEDFB] rounded-lg transition-colors"
-                    title="View full proposal"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleApprove(topic)}
-                    disabled={processing === topic.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                  >
-                    <ThumbsUp className="w-3.5 h-3.5" /> {processing === topic.id ? '…' : 'Approve'}
-                  </button>
-                  <button
-                    onClick={() => { setRejectModal(topic); setRejectReason(''); }}
-                    disabled={processing === topic.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 transition-colors"
-                  >
-                    <ThumbsDown className="w-3.5 h-3.5" /> Reject
-                  </button>
-                </div>
-              </div>
-            ))}
+            {pending.map(topic => <TopicRow key={topic.id} topic={topic} showActions />)}
           </div>
         </div>
       )}
 
-      {done.length > 0 && (
+      {/* ── Approved Topics ── */}
+      {approved.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100">
-            <p className="text-sm font-medium text-gray-600">Recently Reviewed</p>
+          <div className="px-6 py-4 border-b border-gray-100 bg-emerald-50 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-600" />
+            <p className="text-sm font-medium text-emerald-800">Approved Topics ({approved.length})</p>
           </div>
           <div className="divide-y divide-gray-100">
-            {done.map((topic) => (
-              <div key={topic.id} className="px-5 py-4 flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-700 truncate">{topic.title}</p>
-                  <p className="text-xs text-gray-400">By {topic.lecturerName}</p>
-                </div>
-                <span className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${
-                  processed[topic.id] === 'approved' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
-                }`}>
-                  {processed[topic.id] === 'approved' ? '✓ Approved' : '✗ Rejected'}
-                </span>
-              </div>
-            ))}
+            {approved.map(topic => <TopicRow key={topic.id} topic={topic} showActions={false} />)}
           </div>
         </div>
       )}
 
+      {/* ── Rejected Topics ── */}
+      {rejected.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 bg-red-50 flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-red-500" />
+            <p className="text-sm font-medium text-red-700">Rejected Topics ({rejected.length})</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {rejected.map(topic => <TopicRow key={topic.id} topic={topic} showActions={false} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ── Other / Enrolled Topics ── */}
+      {other.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <p className="text-sm font-medium text-gray-600">Enrolled Topics ({other.length})</p>
+            <p className="text-xs text-gray-400 mt-0.5">Topics selected by students from the available list.</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {other.map(topic => <TopicRow key={topic.id} topic={topic} showActions={false} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ── View Topic Modal ── */}
       {viewingTopic && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="bg-white rounded-xl border border-gray-200 shadow-xl w-full max-w-lg p-6">
@@ -1870,29 +2142,42 @@ export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps
               <button onClick={() => setViewingTopic(null)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600" /></button>
             </div>
             <dl className="space-y-3 text-sm mb-4">
-              <div className="flex gap-2"><dt className="w-28 shrink-0 text-gray-500">Proposed by</dt><dd className="text-gray-800 font-medium">{viewingTopic.lecturerName}</dd></div>
+              <div className="flex gap-2"><dt className="w-28 shrink-0 text-gray-500">Proposed by</dt><dd className="text-gray-800 font-medium">{viewingTopic.lecturerName || '—'}</dd></div>
               <div className="flex gap-2"><dt className="w-28 shrink-0 text-gray-500">Department</dt><dd className="text-gray-800">{viewingTopic.department || '—'}</dd></div>
               <div className="flex gap-2"><dt className="w-28 shrink-0 text-gray-500">Research Area</dt><dd className="text-gray-800">{viewingTopic.researchArea || '—'}</dd></div>
+              <div className="flex gap-2"><dt className="w-28 shrink-0 text-gray-500">Status</dt>
+                <dd>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                    viewingTopic.status === 'approved' ? 'bg-emerald-50 text-emerald-700' :
+                    viewingTopic.status === 'rejected' ? 'bg-red-50 text-red-600' :
+                    viewingTopic.status === 'pending_approval' ? 'bg-amber-50 text-amber-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>{viewingTopic.status.replace('_', ' ')}</span>
+                </dd>
+              </div>
               <div className="flex gap-2"><dt className="w-28 shrink-0 text-gray-500">Submitted</dt><dd className="text-gray-800">{new Date(viewingTopic.createdAt).toLocaleString()}</dd></div>
             </dl>
             <div className="bg-gray-50 rounded-lg p-4 mb-5">
               <p className="text-xs font-medium text-gray-500 mb-1">Description</p>
               <p className="text-sm text-gray-700 leading-relaxed">{viewingTopic.description}</p>
             </div>
-            <div className="flex gap-3">
-              <button onClick={() => handleApprove(viewingTopic)} disabled={processing === viewingTopic.id}
-                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
-                <ThumbsUp className="w-4 h-4" /> Approve
-              </button>
-              <button onClick={() => { setRejectModal(viewingTopic); setRejectReason(''); setViewingTopic(null); }}
-                className="flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium text-white bg-red-500 hover:bg-red-600">
-                <ThumbsDown className="w-4 h-4" /> Reject
-              </button>
-            </div>
+            {viewingTopic.status === 'pending_approval' && (
+              <div className="flex gap-3">
+                <button onClick={() => handleApprove(viewingTopic)} disabled={processing === viewingTopic.id}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50">
+                  <ThumbsUp className="w-4 h-4" /> Approve
+                </button>
+                <button onClick={() => { setRejectModal(viewingTopic); setRejectReason(''); setViewingTopic(null); }}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium text-white bg-red-500 hover:bg-red-600">
+                  <ThumbsDown className="w-4 h-4" /> Reject
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
+      {/* ── Reject Reason Modal ── */}
       {rejectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
           <div className="bg-white rounded-xl border border-gray-200 shadow-xl w-full max-w-md p-6">
@@ -1901,7 +2186,7 @@ export function SupervisorTopicApproval({ onNavigate: _onNavigate }: ScreenProps
               <button onClick={() => setRejectModal(null)}><X className="w-5 h-5 text-gray-400" /></button>
             </div>
             <p className="text-sm text-gray-600 mb-3">
-              Rejecting <span className="font-medium text-gray-800">"{rejectModal.title}"</span> proposed by {rejectModal.lecturerName}.
+              Rejecting <span className="font-medium text-gray-800">"{rejectModal.title}"</span> proposed by {rejectModal.lecturerName || 'student'}.
             </p>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Reason <span className="text-red-500">*</span></label>

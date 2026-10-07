@@ -1,7 +1,7 @@
 import type {
   AuthResponse, Topic, Project, Submission, Conversation, Message,
   StudentRecord, SupervisorRecord, LecturerStats, AdminStats,
-  AppNotification, ReportRow, SupervisionRequest,
+  AppNotification, ReportRow, SupervisionRequest, Announcement, ActivityItem,
 } from '../types';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -91,15 +91,42 @@ export const MOCK_PROJECT: Project = {
 export const MOCK_SUBMISSIONS: Submission[] = [
   {
     id: 'sub-001', projectId: 'proj-001', studentId: 'stu-001',
+    studentName: 'Alex Johnson',
     chapterLabel: 'Chapter 1: Introduction', fileName: 'Chapter1_Introduction.pdf',
     fileSize: '1.2 MB', uploadedAt: '2023-10-02T10:00:00Z',
-    status: 'reviewed', feedback: 'Good introduction. Please expand the problem statement in section 1.2 and add more references.',
+    status: 'approved', feedback: 'Good introduction. Expand the problem statement in section 1.2 and add more references.',
+    mark: 72, weight: 15, gradedAt: '2023-10-05T09:00:00Z',
   },
   {
     id: 'sub-002', projectId: 'proj-001', studentId: 'stu-001',
+    studentName: 'Alex Johnson',
     chapterLabel: 'Chapter 2: Literature Review', fileName: 'Chapter2_LitReview.pdf',
     fileSize: '2.4 MB', uploadedAt: '2023-10-20T14:30:00Z',
-    status: 'pending_review',
+    status: 'reviewed', feedback: 'Comprehensive review. Organise sources into thematic clusters.',
+    mark: 68, weight: 20, gradedAt: '2023-10-23T11:00:00Z',
+  },
+  {
+    id: 'sub-003', projectId: 'proj-001', studentId: 'stu-001',
+    studentName: 'Alex Johnson',
+    chapterLabel: 'Chapter 3: Methodology', fileName: 'Chapter3_Methodology.pdf',
+    fileSize: '1.8 MB', uploadedAt: '2023-11-15T09:00:00Z',
+    status: 'pending_review', weight: 25,
+  },
+  // Additional student submissions for grading screen
+  {
+    id: 'sub-004', projectId: 'proj-002', studentId: 'stu-002',
+    studentName: 'Bola Adeyemi',
+    chapterLabel: 'Chapter 1: Introduction', fileName: 'Chapter1_Intro.pdf',
+    fileSize: '1.0 MB', uploadedAt: '2023-10-04T08:00:00Z',
+    status: 'approved', feedback: 'Excellent problem framing. Well structured.',
+    mark: 80, weight: 15, gradedAt: '2023-10-06T10:00:00Z',
+  },
+  {
+    id: 'sub-005', projectId: 'proj-002', studentId: 'stu-002',
+    studentName: 'Bola Adeyemi',
+    chapterLabel: 'Chapter 2: Literature Review', fileName: 'Chapter2_LitReview.pdf',
+    fileSize: '2.1 MB', uploadedAt: '2023-10-22T11:00:00Z',
+    status: 'pending_review', weight: 20,
   },
 ];
 
@@ -170,7 +197,7 @@ export const MOCK_LECTURER_MESSAGES: Record<string, Message[]> = {
 
 // ─── Lecturer stats & students ────────────────────────────────────────────────
 export const MOCK_LECTURER_STATS: LecturerStats = {
-  assignedStudents: 12, activeProjects: 10, pendingReviews: 4, workloadPercent: 80,
+  assignedStudents: 12, activeProjects: 10, pendingReviews: 4, pendingRequests: 2, workloadPercent: 80,
 };
 
 export const MOCK_ASSIGNED_STUDENTS: StudentRecord[] = [
@@ -242,4 +269,43 @@ export const MOCK_REPORT_ROWS: ReportRow[] = [
   { studentName: 'Alex Johnson', regNo: 'CS/2021/001', department: 'Computer Science', topic: 'Web-Based Project Allocation System', supervisor: 'Dr. Amina Yusuf', progress: 45, status: 'In Progress' },
   { studentName: 'Bola Adeyemi', regNo: 'CS/2021/002', department: 'Computer Science', topic: 'AI-Driven Student Performance Prediction', supervisor: 'Dr. Amina Yusuf', progress: 30, status: 'In Progress' },
   { studentName: 'Chioma Obi', regNo: 'CS/2021/003', department: 'Computer Science', topic: 'NLP for Low-Resource African Languages', supervisor: 'Dr. Amina Yusuf', progress: 60, status: 'In Progress' },
+];
+
+export const MOCK_ANNOUNCEMENTS: Announcement[] = [
+  {
+    id: 'ann-001',
+    title: 'Chapter 1 Submission Deadline',
+    body: 'All students must submit Chapter 1 drafts by Friday, 5pm. Late submissions will not be accepted without prior approval from your supervisor.',
+    type: 'warning',
+    createdBy: 'Admin',
+    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'ann-002',
+    title: 'Portal Maintenance — Saturday 2am–4am',
+    body: 'The system will be unavailable for scheduled maintenance on Saturday morning. Please save all in-progress work before then.',
+    type: 'info',
+    createdBy: 'Admin',
+    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'ann-003',
+    title: 'Topic Selection Now Open',
+    body: 'Students may now select or propose project topics for the upcoming academic session. Visit the Project Topics page to get started.',
+    type: 'success',
+    createdBy: 'Admin',
+    createdAt: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+];
+
+const now = Date.now();
+export const MOCK_ACTIVITY_FEED: ActivityItem[] = [
+  { id: 'act-001', category: 'supervision', title: 'New supervision request', description: 'Fatima Lawal requested Dr. Amina Yusuf as supervisor', timestamp: new Date(now - 5 * 60 * 1000).toISOString(), read: false, navigateTo: 'supervisor-allocation' },
+  { id: 'act-002', category: 'topic', title: 'Topic submitted for approval', description: 'Alex Johnson proposed "Federated Learning for Edge Devices"', timestamp: new Date(now - 22 * 60 * 1000).toISOString(), read: false, navigateTo: 'topic-approval' },
+  { id: 'act-003', category: 'student', title: 'New student registered', description: 'Chukwuemeka Nwosu joined — SE/2024/019', timestamp: new Date(now - 2 * 60 * 60 * 1000).toISOString(), read: false, navigateTo: 'supervisor-allocation' },
+  { id: 'act-004', category: 'allocation', title: 'Supervisor allocated', description: 'Bola Adeyemi assigned to Prof. Kehinde Olatunji', timestamp: new Date(now - 4 * 60 * 60 * 1000).toISOString(), read: true, navigateTo: 'supervisor-allocation' },
+  { id: 'act-005', category: 'submission', title: 'Chapter reviewed', description: 'Dr. Amina Yusuf submitted feedback on Chioma Obi\'s Chapter 2', timestamp: new Date(now - 6 * 60 * 60 * 1000).toISOString(), read: true },
+  { id: 'act-006', category: 'topic', title: 'Topic approved', description: 'Dr. Hassan Bala approved "Blockchain in Academic Records"', timestamp: new Date(now - 10 * 60 * 60 * 1000).toISOString(), read: true, navigateTo: 'topic-approval' },
+  { id: 'act-007', category: 'supervision', title: 'Request denied', description: 'Dr. Amina Yusuf denied Ibrahim Musa\'s request — capacity full', timestamp: new Date(now - 1 * 24 * 60 * 60 * 1000).toISOString(), read: true },
+  { id: 'act-008', category: 'announcement', title: 'Announcement sent', description: 'Chapter 1 deadline notice broadcast to all users', timestamp: new Date(now - 1 * 24 * 60 * 60 * 1000).toISOString(), read: true },
 ];
